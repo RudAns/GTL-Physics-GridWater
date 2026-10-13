@@ -1,0 +1,19 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.8",
+	"Category": "",
+	"Description": "GameTech-Lab: Timberborn-style grid water (virtual pipes, badwater, seasons) as an interactive demo game.",
+	"Modules": [
+		{
+			"Name": "GridWater",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [ "Engine", "UMG" ]
+		}
+	],
+	"Plugins": [
+		{ "Name": "PythonScriptPlugin", "Enabled": true },
+		{ "Name": "EditorScriptingUtilities", "Enabled": true },
+		{ "Name": "ProceduralMeshComponent", "Enabled": true }
+	]
+}
