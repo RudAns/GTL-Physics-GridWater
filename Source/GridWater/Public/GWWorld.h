@@ -33,6 +33,9 @@ struct FGWStructure
 	UPROPERTY() int32 Cell = 0;
 	UPROPERTY() int32 Dir = 0;
 	UPROPERTY() float GateH = 1.5f;		// floodgate height in blocks
+	UPROPERTY() int32 LeveeH = 2;		// levee height in blocks (1..3)
+	UPROPERTY() float LeafW = 0.9f;		// gate leaf / shutter width and offset across the channel (joined runs fill the gaps)
+	UPROPERTY() float LeafOff = 0.f;
 	UPROPERTY() bool bAuto = true;		// valve closes itself on contamination
 	UPROPERTY() bool bClosed = false;
 	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> Parts;
@@ -104,6 +107,16 @@ public:
 	bool RemoveAt(int32 CellIdx);
 	void AdjustGate(int32 CellIdx, float Delta);
 	void ToggleValve(int32 CellIdx);
+	/** Cells of the structure run connected to CellIdx: same type, 4-neighbours, and for gates/valves/dams the same flow axis. */
+	TArray<int32> ConnectedGroup(int32 CellIdx) const;
+	/** Synchronised height change for a selected run, as in the game: every member takes the clicked one's new height. */
+	void AdjustGroupHeight(const TArray<int32>& Cells, int32 Primary, int32 Steps);
+	/** 0 automatic, 1 forced open, 2 forced closed */
+	void SetValveMode(const TArray<int32>& Cells, int32 Mode);
+	TArray<int32> Selected;
+	int32 SelectedPrimary = INDEX_NONE;
+	void SetSelection(int32 CellIdx);
+	void RefreshSelectionVisual();
 	bool Terraform(int32 CellIdx, int32 Delta);
 	float ValveThreshold = 0.05f;
 	float DefaultGateH = 1.5f;
@@ -131,6 +144,8 @@ public:
 	void FastForward(float SimSeconds);
 
 	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> GhostMID;
+	UPROPERTY() TObjectPtr<UMaterialInstanceDynamic> SelectMID;
+	UPROPERTY() TObjectPtr<UInstancedStaticMeshComponent> SelectISM;
 	UStaticMesh* MeshCube() const { return CubeMesh; }
 
 protected:
@@ -184,6 +199,10 @@ protected:
 	void SpawnPlants();
 	void SpawnDecor();
 	void BuildStructureVisual(FGWStructure& S);
+	void RebuildVisual(int32 CellIdx);
+	void RebuildAround(int32 CellIdx);
+	bool Joined(const FGWStructure& S, int32 Side) const;
+	bool SameRun(const FGWStructure& A, const FGWStructure& B) const;
 	UStaticMeshComponent* AddPart(FGWStructure& S, UStaticMesh* Mesh, const FVector& Loc, const FRotator& Rot, const FVector& Scale, const FLinearColor& Color, float Pattern, float Rough = 0.8f);
 	UInstancedStaticMeshComponent* MakeISM(const TCHAR* MeshPath, const TCHAR* MatPath);
 	void DrawFlowArrows() const;

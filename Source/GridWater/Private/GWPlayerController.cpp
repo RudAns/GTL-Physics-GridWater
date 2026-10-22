@@ -100,15 +100,15 @@ FString AGWPlayerController::ToolHelp(EGWTool T)
 {
 	switch (T)
 	{
-	case EGWTool::Levee: return TEXT("两格高的实体，完全挡水。模拟原语：实体障碍");
+	case EGWTool::Levee: return TEXT("实体墙，完全挡水，默认两格高。查看模式下点击选中整排，[ ] 调到 1–3 格。模拟原语：实体障碍");
 	case EGWTool::Dam: return TEXT("半格高的低坝，水位超过坝顶才放行。模拟原语：流入限制（软硬坝）");
 	case EGWTool::Floodgate: return TEXT("闸板高度可调：整数部分是实体，小数部分是流入限制。悬停后按 [ ] 调高度");
-	case EGWTool::Valve: return TEXT("单向阀：上游污染度超过阈值自动关闭。点击已建好的阀切换 自动/常开/常闭");
+	case EGWTool::Valve: return TEXT("单向阀：上游污染度超过阈值自动关闭。查看模式下点击选中整排，M 切换 自动/常开/常闭");
 	case EGWTool::Pump: return TEXT("从相邻水格抽水，清水与恶水按比例计入。建在水边");
 	case EGWTool::Dig: return TEXT("地面降低一格，可拖动连续挖渠");
 	case EGWTool::Raise: return TEXT("地面抬高一格，可拖动连续堆土");
 	case EGWTool::Erase: return TEXT("拆除建筑");
-	default: return TEXT("悬停查看格子数据，点击自动阀切换模式");
+	default: return TEXT("悬停查看格子数据；点击建筑选中相连的一整排，统一调整高度或模式");
 	}
 }
 
@@ -266,8 +266,50 @@ void AGWPlayerController::Toast(const FString& Title, const FString& Body)
 	ToastTitle = Title; ToastBody = Body; ToastTime = GetWorld()->GetRealTimeSeconds();
 }
 
+void AGWPlayerController::AdjustSelection(int32 Steps)
+{
+	if (!Water) return;
+	if (Water->Selected.Num()) { Water->AdjustGroupHeight(Water->Selected, Water->SelectedPrimary, Steps); return; }
+	// nothing selected: act on the run under the cursor, otherwise on the height of the next floodgate
+	const int32 S = HoverCell != INDEX_NONE ? Water->FindStructure(HoverCell) : INDEX_NONE;
+	if (S != INDEX_NONE && (Water->Structures[S].Type == EGWTool::Floodgate || Water->Structures[S].Type == EGWTool::Levee))
+		Water->AdjustGroupHeight(Water->ConnectedGroup(HoverCell), HoverCell, Steps);
+	else AdjustParam(4, Steps);
+}
+
+int32 AGWPlayerController::SelectedValveMode() const
+{
+	if (!Water || Water->SelectedPrimary == INDEX_NONE) return -1;
+	const int32 I = Water->FindStructure(Water->SelectedPrimary);
+	if (I == INDEX_NONE || Water->Structures[I].Type != EGWTool::Valve) return -1;
+	const FGWStructure& S = Water->Structures[I];
+	return S.bAuto ? 0 : (S.bClosed ? 2 : 1);
+}
+
+void AGWPlayerController::SetSelectedValveMode(int32 Mode)
+{
+	if (!Water) return;
+	Water->SetValveMode(Water->Selected, Mode);
+	static const TCHAR* N[] = { TEXT("自动：上游污染度超过阈值时关闭"), TEXT("常开：不论污染度都放水"), TEXT("常闭：完全挡水") };
+	Toast(FString::Printf(TEXT("阀门 × %d"), Water->Selected.Num()), N[FMath::Clamp(Mode, 0, 2)]);
+}
+
+void AGWPlayerController::RemoveSelection()
+{
+	if (!Water) return;
+	const TArray<int32> Cells = Water->Selected;
+	for (int32 C : Cells) Water->RemoveAt(C);
+	ClearSelection();
+}
+
+void AGWPlayerController::ClearSelection()
+{
+	if (Water) Water->SetSelection(INDEX_NONE);
+}
+
 void AGWPlayerController::SelectTool(EGWTool T)
 {
+	ClearSelection();
 	Tool = (Tool == T) ? EGWTool::None : T;
 	bDirManual = false;
 	if (Water) Water->bGridLines = Tool != EGWTool::None;
@@ -318,15 +360,18 @@ void AGWPlayerController::HandleKeys(float DeltaTime)
 		const float Wh = WheelDelta();
 		if (!FMath::IsNearlyZero(Wh))
 		{
-			const int32 S = Water && HoverCell != INDEX_NONE ? Water->FindStructure(HoverCell) : INDEX_NONE;
-			if (bShift && S != INDEX_NONE && Water->Structures[S].Type == EGWTool::Floodgate) Water->AdjustGate(HoverCell, Wh * 0.25f);
+			if (bShift) AdjustSelection(Wh > 0 ? 1 : -1);
 			else Cam->Zoom(Wh);
 		}
 	}
 	static const TPair<FKey, EGWTool> ToolKeys[] = { {EKeys::One, EGWTool::Levee}, {EKeys::Two, EGWTool::Dam}, {EKeys::Three, EGWTool::Floodgate}, {EKeys::Four, EGWTool::Valve},
 		{EKeys::Five, EGWTool::Pump}, {EKeys::Six, EGWTool::Dig}, {EKeys::Seven, EGWTool::Raise}, {EKeys::X, EGWTool::Erase} };
 	for (const auto& K : ToolKeys) if (WasInputKeyJustPressed(K.Key)) SelectTool(K.Value);
-	if (WasInputKeyJustPressed(EKeys::Escape) || WasInputKeyJustPressed(EKeys::RightMouseButton)) SelectTool(EGWTool::None);
+	if (WasInputKeyJustPressed(EKeys::Escape) || WasInputKeyJustPressed(EKeys::RightMouseButton))
+	{
+		if (Water && Water->Selected.Num()) ClearSelection();
+		else SelectTool(EGWTool::None);
+	}
 	if (WasInputKeyJustPressed(EKeys::Z)) { Dir = (Dir + 1) & 3; bDirManual = true; }
 	static const FKey FKeys[] = { EKeys::F1, EKeys::F2, EKeys::F3, EKeys::F4, EKeys::F5, EKeys::F6, EKeys::F7 };
 	for (int32 I = 0; I < NumPrinciples; ++I) if (WasInputKeyJustPressed(FKeys[I])) TogglePrinciple(I);
@@ -343,12 +388,9 @@ void AGWPlayerController::HandleKeys(float DeltaTime)
 	if (WasInputKeyJustPressed(EKeys::L)) bLabOpen = !bLabOpen;
 	if (WasInputKeyJustPressed(EKeys::Home)) UGameplayStatics::OpenLevel(this, FName(*UGameplayStatics::GetCurrentLevelName(this)));
 	if (WasInputKeyJustPressed(EKeys::LeftBracket) || WasInputKeyJustPressed(EKeys::RightBracket))
-	{
-		const float D = WasInputKeyJustPressed(EKeys::LeftBracket) ? -0.25f : 0.25f;
-		const int32 S = HoverCell != INDEX_NONE ? Water->FindStructure(HoverCell) : INDEX_NONE;
-		if (S != INDEX_NONE && Water->Structures[S].Type == EGWTool::Floodgate) Water->AdjustGate(HoverCell, D);
-		else AdjustParam(4, D > 0 ? 1 : -1);
-	}
+		AdjustSelection(WasInputKeyJustPressed(EKeys::LeftBracket) ? -1 : 1);
+	if (WasInputKeyJustPressed(EKeys::M) && SelectedValveMode() >= 0) SetSelectedValveMode((SelectedValveMode() + 1) % 3);
+	if (WasInputKeyJustPressed(EKeys::Delete) && Water->Selected.Num()) RemoveSelection();
 
 	// placement (dragging works for levees, digging, raising and erasing)
 	const bool bDragTool = Tool == EGWTool::Levee || Tool == EGWTool::Dig || Tool == EGWTool::Raise || Tool == EGWTool::Erase;
@@ -367,7 +409,19 @@ void AGWPlayerController::ApplyAt(int32 CellIdx, bool bFirst)
 	DragCells.Add(CellIdx);
 	if (Tool == EGWTool::None)
 	{
-		if (bFirst) Water->ToggleValve(CellIdx);
+		// inspect tool: clicking a structure selects its whole connected run, clicking elsewhere clears the selection
+		if (bFirst)
+		{
+			Water->SetSelection(Water->FindStructure(CellIdx) != INDEX_NONE ? CellIdx : INDEX_NONE);
+			if (Water->Selected.Num())
+			{
+				const FGWStructure& S = Water->Structures[Water->FindStructure(CellIdx)];
+				Toast(FString::Printf(TEXT("已选中：%s × %d"), *ToolName(S.Type), Water->Selected.Num()),
+					S.Type == EGWTool::Floodgate || S.Type == EGWTool::Levee ? TEXT("相连的同类建筑一起选中。[ ] 或 Shift+滚轮统一调整高度，Delete 拆除，Esc 取消选中。")
+					: S.Type == EGWTool::Valve ? TEXT("相连的阀门一起选中。M 在 自动 / 常开 / 常闭 之间切换，Delete 拆除，Esc 取消选中。")
+					: TEXT("Delete 拆除，Esc 取消选中。"));
+			}
+		}
 		return;
 	}
 	FString Why;
@@ -458,6 +512,10 @@ void AGWPlayerController::TickCapture(float DeltaTime)
 			{ TEXT("t_start"), 0.5f, [](AGWPlayerController* PC) { PC->Press(EKeys::Enter); },
 				[](AGWPlayerController* PC) { PC->Check(TEXT("enter_starts"), !PC->bIntro && PC->Water->SpeedIndex == 1, FString::Printf(TEXT("intro=%d speed=%d"), PC->bIntro, PC->Water->SpeedIndex)); }, false },
 			{ TEXT("01_overview"), 1.5f, [CamAt](AGWPlayerController* PC) { CamAt(PC, FVector(4800, 3500, 450), 12500.f, -90.f); }, Noop, true },
+			// paused close-up of terraced waterfalls: two frames 0.3 s apart must match (no z-fighting shimmer)
+			{ TEXT("03_waterfall_a"), 1.5f, [CamAt](AGWPlayerController* PC) { PC->SetSpeed(0); CamAt(PC, PC->Water->CellCenter(17 * AGWWorld::GW + 27, 500), 1700.f, -45.f); }, Noop, true },
+			{ TEXT("03_waterfall_b"), 0.3f, Noop, Noop, true },
+			{ TEXT("t_resume"), 0.2f, [CamAt](AGWPlayerController* PC) { PC->SetSpeed(1); CamAt(PC, FVector(4800, 3500, 450), 12500.f, -90.f); }, Noop, false },
 			{ TEXT("t_rotate"), 1.2f, [](AGWPlayerController* PC) { PC->Memo.Add(TEXT("yaw"), PC->GetCam()->GetYaw()); PC->Press(EKeys::LeftShift, 4); PC->Press(EKeys::R); },
 				[](AGWPlayerController* PC) { const float D = PC->GetCam()->GetYaw() - PC->Memo[TEXT("yaw")]; PC->Check(TEXT("shift_r_rotates_minus_45"), FMath::IsNearlyEqual(D, -45.f, 1.f), FString::Printf(TEXT("delta=%.1f"), D)); }, false },
 			{ TEXT("02_rotated"), 1.0f, Noop, Noop, true },
@@ -482,7 +540,29 @@ void AGWPlayerController::TickCapture(float DeltaTime)
 				[M](AGWPlayerController* PC) { const int32 S = PC->Water->FindStructure(M(PC, TEXT("gate"))); PC->Check(TEXT("click_places_floodgate"), S != INDEX_NONE && PC->Water->Structures[S].Type == EGWTool::Floodgate, FString::Printf(TEXT("idx=%d"), S)); }, false },
 			{ TEXT("t_gate_up"), 0.5f, [](AGWPlayerController* PC) { PC->Press(EKeys::RightBracket); },
 				[M](AGWPlayerController* PC) { const int32 S = PC->Water->FindStructure(M(PC, TEXT("gate"))); PC->Check(TEXT("bracket_raises_gate"), S != INDEX_NONE && FMath::IsNearlyEqual(PC->Water->Structures[S].GateH, 1.75f), FString::Printf(TEXT("h=%.2f"), S != INDEX_NONE ? PC->Water->Structures[S].GateH : -1.f)); }, false },
+			// a second floodgate beside the first joins the run and takes its height
+			{ TEXT("t_gate_join"), 0.6f, [](AGWPlayerController* PC) {
+					const int32 G = (int32)PC->Memo[TEXT("gate")];
+					const int32 Si = PC->Water->FindStructure(G);
+					const int32 D = Si != INDEX_NONE ? PC->Water->Structures[Si].Dir : 0;
+					const int32 N = G - FWaterSim::DY[D] + FWaterSim::DX[D] * AGWWorld::GW;
+					PC->Memo.Add(TEXT("gate2"), N);
+					PC->MouseToCell(N); }, Noop, false },
+			{ TEXT("t_gate_join2"), 0.6f, [](AGWPlayerController* PC) { PC->Press(EKeys::LeftMouseButton); },
+				[](AGWPlayerController* PC) { const int32 S = PC->Water->FindStructure((int32)PC->Memo[TEXT("gate2")]);
+					PC->Check(TEXT("joined_gate_takes_run_height"), S != INDEX_NONE && FMath::IsNearlyEqual(PC->Water->Structures[S].GateH, 1.75f), FString::Printf(TEXT("h=%.2f"), S != INDEX_NONE ? PC->Water->Structures[S].GateH : -1.f)); }, false },
+			{ TEXT("t_gate_select"), 0.6f, [](AGWPlayerController* PC) { PC->Press(EKeys::Escape); }, Noop, false },
+			{ TEXT("t_gate_select2"), 0.5f, [](AGWPlayerController* PC) { PC->MouseToCell((int32)PC->Memo[TEXT("gate")]); }, Noop, false },
+			{ TEXT("t_gate_select3"), 0.5f, [](AGWPlayerController* PC) { PC->Press(EKeys::LeftMouseButton); },
+				[](AGWPlayerController* PC) { PC->Check(TEXT("click_selects_run"), PC->Water->Selected.Num() == 2, FString::Printf(TEXT("selected=%d"), PC->Water->Selected.Num())); }, false },
+			{ TEXT("t_gate_group_up"), 0.5f, [](AGWPlayerController* PC) { PC->Press(EKeys::RightBracket); },
+				[](AGWPlayerController* PC) {
+					const int32 A = PC->Water->FindStructure((int32)PC->Memo[TEXT("gate")]), B = PC->Water->FindStructure((int32)PC->Memo[TEXT("gate2")]);
+					const bool bOk = A != INDEX_NONE && B != INDEX_NONE && FMath::IsNearlyEqual(PC->Water->Structures[A].GateH, 2.0f) && FMath::IsNearlyEqual(PC->Water->Structures[B].GateH, 2.0f);
+					PC->Check(TEXT("bracket_raises_whole_run"), bOk, TEXT("")); }, false },
 			{ TEXT("06_floodgate_backwater"), 4.0f, Noop, Noop, true },
+			{ TEXT("t_gate_deselect"), 0.3f, [](AGWPlayerController* PC) { PC->Press(EKeys::Escape); },
+				[](AGWPlayerController* PC) { PC->Check(TEXT("esc_clears_selection"), PC->Water->Selected.Num() == 0, TEXT("")); }, false },
 			// drag a levee line
 			{ TEXT("t_levee_drag"), 0.5f, [](AGWPlayerController* PC) {
 					PC->Press(EKeys::One);
@@ -507,11 +587,18 @@ void AGWPlayerController::TickCapture(float DeltaTime)
 					PC->Memo.Add(TEXT("valve"), C);
 					CamAt(PC, PC->Water->CellCenter(C, 400), 2600.f, -90.f); }, Noop, false },
 			{ TEXT("t_valve_click2"), 0.5f, [M](AGWPlayerController* PC) { PC->MouseToCell(M(PC, TEXT("valve"))); PC->Press(EKeys::LeftMouseButton); },
-				[M](AGWPlayerController* PC) { const int32 S = PC->Water->FindStructure(M(PC, TEXT("valve"))); PC->Check(TEXT("click_valve_manual_open"), S != INDEX_NONE && !PC->Water->Structures[S].bAuto && !PC->Water->Structures[S].bClosed, TEXT("")); }, false },
-			{ TEXT("t_valve_click3"), 0.5f, [](AGWPlayerController* PC) { PC->Press(EKeys::LeftMouseButton); },
-				[M](AGWPlayerController* PC) { const int32 S = PC->Water->FindStructure(M(PC, TEXT("valve"))); PC->Check(TEXT("click_valve_closed"), S != INDEX_NONE && PC->Water->Structures[S].bClosed && !PC->Water->Structures[S].bAuto, TEXT("")); }, false },
-			{ TEXT("t_valve_click4"), 0.5f, [](AGWPlayerController* PC) { PC->Press(EKeys::LeftMouseButton); },
-				[M](AGWPlayerController* PC) { const int32 S = PC->Water->FindStructure(M(PC, TEXT("valve"))); PC->Check(TEXT("click_valve_back_to_auto"), S != INDEX_NONE && PC->Water->Structures[S].bAuto, TEXT("")); }, false },
+				[](AGWPlayerController* PC) { int32 N = 0; for (const FGWStructure& S : PC->Water->Structures) N += S.Type == EGWTool::Valve;
+					PC->Check(TEXT("click_selects_valve_run"), PC->Water->Selected.Num() == N && N > 1, FString::Printf(TEXT("selected=%d valves=%d"), PC->Water->Selected.Num(), N)); }, false },
+			{ TEXT("08b_valve_selected"), 0.8f, Noop, Noop, true },
+			{ TEXT("t_valve_m1"), 0.5f, [](AGWPlayerController* PC) { PC->Press(EKeys::M); },
+				[](AGWPlayerController* PC) { bool bAll = true; for (int32 C : PC->Water->Selected) { const FGWStructure& S = PC->Water->Structures[PC->Water->FindStructure(C)]; bAll &= !S.bAuto && !S.bClosed; }
+					PC->Check(TEXT("m_sets_run_open"), bAll, TEXT("")); }, false },
+			{ TEXT("t_valve_m2"), 0.5f, [](AGWPlayerController* PC) { PC->Press(EKeys::M); },
+				[](AGWPlayerController* PC) { bool bAll = true; for (int32 C : PC->Water->Selected) { const FGWStructure& S = PC->Water->Structures[PC->Water->FindStructure(C)]; bAll &= !S.bAuto && S.bClosed; }
+					PC->Check(TEXT("m_sets_run_closed"), bAll, TEXT("")); }, false },
+			{ TEXT("t_valve_m3"), 0.5f, [](AGWPlayerController* PC) { PC->Press(EKeys::M); },
+				[](AGWPlayerController* PC) { bool bAll = true; for (int32 C : PC->Water->Selected) bAll &= PC->Water->Structures[PC->Water->FindStructure(C)].bAuto;
+					PC->Check(TEXT("m_sets_run_auto"), bAll, TEXT("")); PC->Press(EKeys::Escape); }, false },
 			// principle switches F1..F7 and back
 			{ TEXT("t_principles"), 0.4f, [](AGWPlayerController* PC) { for (const FKey& K : { EKeys::F1, EKeys::F2, EKeys::F3, EKeys::F4, EKeys::F5, EKeys::F6, EKeys::F7 }) PC->Press(K); },
 				[](AGWPlayerController* PC) { const FGWSimSettings& S = PC->Water->Sim.S;

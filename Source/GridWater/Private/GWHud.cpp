@@ -77,6 +77,11 @@ void UGWClick::OnClicked()
 	case 7: P->ToggleHazard(); break;
 	case 8: P->StartGame(); break;
 	case 9: P->bLabOpen = !P->bLabOpen; break;
+	case 10: P->AdjustSelection(-1); break;
+	case 11: P->AdjustSelection(1); break;
+	case 12: P->SetSelectedValveMode(Index); break;
+	case 13: P->RemoveSelection(); break;
+	case 14: P->ClearSelection(); break;
 	default: break;
 	}
 }
@@ -365,6 +370,66 @@ TSharedRef<SWidget> UGWHud::RebuildWidget()
 			Put(Bar, FVector2D(0.5f, 1), FVector2D(0.5f, 1), FVector2D(0, -14));
 			GameplayWidgets.Add(Bar);
 		}
+		// ---------------- selection panel (above the hint bar) ----------------
+		{
+			SelPanel = Panel(Fill, Gold, 10.f, FMargin(16, 10, 16, 10));
+			UHorizontalBox* H = HBox();
+			UVerticalBox* Left = VBox();
+			SelTitle = Text(17, Gold, true);
+			Left->AddChildToVerticalBox(SelTitle);
+			Left->AddChildToVerticalBox(Label(TEXT("相连的同类建筑同步调整"), 13, Dim));
+			H->AddChildToHorizontalBox(Left)->SetVerticalAlignment(VAlign_Center);
+			H->AddChildToHorizontalBox(Gap(22, 1));
+			// height row: [-] value [+]
+			UHorizontalBox* HR = HBox();
+			for (int32 Sgn = 0; Sgn < 2; ++Sgn)
+			{
+				UButton* B = Button(Sgn ? 11 : 10, 0, Row);
+				UBorder* Back = Panel(Row, Rim, 6.f, FMargin(12, 2, 12, 3));
+				Back->SetContent(Label(Sgn ? TEXT("+") : TEXT("−"), 18, Gold, true));
+				B->SetContent(Back);
+				if (Sgn == 0) { HR->AddChildToHorizontalBox(B)->SetVerticalAlignment(VAlign_Center); continue; }
+				SelValue = Text(16, Ink, true);
+				SelValue->SetJustification(ETextJustify::Center);
+				HR->AddChildToHorizontalBox(Sized(SelValue, 200, 0))->SetVerticalAlignment(VAlign_Center);
+				HR->AddChildToHorizontalBox(B)->SetVerticalAlignment(VAlign_Center);
+				HR->AddChildToHorizontalBox(Gap(8, 1));
+				HR->AddChildToHorizontalBox(KeyCap(TEXT("[ ]"), 11))->SetVerticalAlignment(VAlign_Center);
+			}
+			SelHeightRow = HR;
+			H->AddChildToHorizontalBox(HR)->SetVerticalAlignment(VAlign_Center);
+			// valve row: auto / open / closed
+			UHorizontalBox* VR = HBox();
+			const TCHAR* Modes[] = { TEXT("自动"), TEXT("常开"), TEXT("常闭") };
+			for (int32 I = 0; I < 3; ++I)
+			{
+				UButton* B = Button(12, I, Row);
+				UBorder* Back = Panel(Row, FLinearColor::Transparent, 6.f, FMargin(12, 3, 12, 4));
+				Back->SetContent(Label(Modes[I], 15, Ink, true));
+				B->SetContent(Back);
+				SelModeBacks.Add(Back);
+				VR->AddChildToHorizontalBox(B)->SetPadding(FMargin(0, 0, 4, 0));
+			}
+			VR->AddChildToHorizontalBox(Gap(4, 1));
+			VR->AddChildToHorizontalBox(KeyCap(TEXT("M"), 11))->SetVerticalAlignment(VAlign_Center);
+			SelValveRow = VR;
+			H->AddChildToHorizontalBox(VR)->SetVerticalAlignment(VAlign_Center);
+			H->AddChildToHorizontalBox(Gap(22, 1));
+			for (int32 K = 0; K < 2; ++K)
+			{
+				UButton* B = Button(K ? 14 : 13, 0, Row);
+				UBorder* Back = Panel(Row, FLinearColor::Transparent, 6.f, FMargin(10, 3, 10, 4));
+				UHorizontalBox* BH = HBox();
+				BH->AddChildToHorizontalBox(Label(K ? TEXT("取消选中") : TEXT("拆除"), 14, K ? Ink : Bad))->SetVerticalAlignment(VAlign_Center);
+				BH->AddChildToHorizontalBox(Gap(6, 1));
+				BH->AddChildToHorizontalBox(KeyCap(K ? TEXT("Esc") : TEXT("Del"), 10))->SetVerticalAlignment(VAlign_Center);
+				Back->SetContent(BH);
+				B->SetContent(Back);
+				H->AddChildToHorizontalBox(B)->SetPadding(FMargin(0, 0, 4, 0));
+			}
+			SelPanel->SetContent(H);
+			Put(SelPanel, FVector2D(0.5f, 1), FVector2D(0.5f, 1), FVector2D(0, -62));
+		}
 		// ---------------- toast (under the timeline) ----------------
 		{
 			ToastPanel = Panel(Fill, Gold, 10.f, FMargin(18, 10, 18, 12));
@@ -521,6 +586,22 @@ void UGWHud::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	for (int32 I = 0; I < LedgerValues.Num(); ++I) Set(LedgerValues[I], V[I]);
 	LedgerValues[5]->SetColorAndOpacity(FSlateColor(FMath::Abs(Err) > 0.5 ? Bad : Good));
 	LedgerValues[7]->SetColorAndOpacity(FSlateColor(FMath::Abs(CErr) > 0.05 ? Bad : Good));
+
+	// selection panel
+	const int32 SelI = W->SelectedPrimary != INDEX_NONE ? W->FindStructure(W->SelectedPrimary) : INDEX_NONE;
+	SelPanel->SetVisibility(bShowGame && SelI != INDEX_NONE ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+	if (SelI != INDEX_NONE)
+	{
+		const FGWStructure& St = W->Structures[SelI];
+		Set(SelTitle, FString::Printf(TEXT("已选中：%s × %d"), *AGWPlayerController::ToolName(St.Type), W->Selected.Num()));
+		const bool bHeight = St.Type == EGWTool::Floodgate || St.Type == EGWTool::Levee;
+		SelHeightRow->SetVisibility(bHeight ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		SelValveRow->SetVisibility(St.Type == EGWTool::Valve ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
+		if (St.Type == EGWTool::Floodgate) Set(SelValue, FString::Printf(TEXT("闸板高度 %.2f 格"), St.GateH));
+		if (St.Type == EGWTool::Levee) Set(SelValue, FString::Printf(TEXT("堤高 %d 格"), St.LeveeH));
+		const int32 Mode = P->SelectedValveMode();
+		for (int32 I = 0; I < SelModeBacks.Num(); ++I) SelModeBacks[I]->SetBrush(Rounded(I == Mode ? RowSel : Row, 6.f, I == Mode ? Gold : FLinearColor::Transparent, 1.f));
+	}
 
 	// toast (7 s, fading over the last second)
 	const float Age = GetWorld()->GetRealTimeSeconds() - P->ToastTime;

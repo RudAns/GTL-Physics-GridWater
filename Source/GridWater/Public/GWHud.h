@@ -83,5 +83,12 @@ private:
 	UPROPERTY() TObjectPtr<UTextBlock> LegendLo;
 	UPROPERTY() TObjectPtr<UTextBlock> LegendHi;
 	UPROPERTY() TObjectPtr<UBorder> Intro;
+	// selection panel
+	UPROPERTY() TObjectPtr<UBorder> SelPanel;
+	UPROPERTY() TObjectPtr<UTextBlock> SelTitle;
+	UPROPERTY() TObjectPtr<UTextBlock> SelValue;
+	UPROPERTY() TObjectPtr<UWidget> SelHeightRow;
+	UPROPERTY() TObjectPtr<UWidget> SelValveRow;
+	UPROPERTY() TArray<TObjectPtr<UBorder>> SelModeBacks;
 	UPROPERTY() TArray<TObjectPtr<UWidget>> GameplayWidgets;
 };

@@ -154,7 +154,8 @@ struct GWF
             float4 v = S(T, Sm, q);
             if (v.g > 0.01 && abs(v.r - me.r) < 0.45) { sum += v.r; n += 1; }
         }
-        return sum / n;
+        // keep a wet surface a few centimetres above its own floor so thin water never shares a plane with the terrain
+        return max(sum / n, me.r - me.g + 0.03);
     }
     float3 R4(float3 a, float3 b, float3 c, float3 d, float t)
     {
@@ -196,7 +197,9 @@ if (UV1.x > 1.5)
     z0 = m0.g > 0.01 ? min(b0, t0) : t0;
     z1 = m1.g > 0.01 ? min(b1, t1) : t1;
 }
-return float3(0, 0, lerp(z0, z1, Alpha) * Grid.w - P.z);
+// side faces sit 1.5 cm in front of the cell edge, so a waterfall sheet never z-fights the cliff face behind it
+float2 push = UV1.x > 0.5 ? float2(d) * 1.5 : float2(0, 0);
+return float3(push, lerp(z0, z1, Alpha) * Grid.w - P.z);
 """
 
 WATER_SAMPLE = r"""
@@ -213,8 +216,8 @@ float3 bad = lerp(float3(0.50, 0.13, 0.035), float3(0.24, 0.045, 0.02), saturate
 float3 col = lerp(clean, bad, smoothstep(0.0, 0.8, c));
 float3 N = normalize(cross(ddx(Pw), ddy(Pw)));
 float side = 1 - abs(N.z);
-float foam = saturate((sp - 1.2) * 0.5) * saturate(d * 4.0) + side * 0.75;
-float grain = frac(sin(dot(floor(Pw.xy / 9 + Time * float2(1.1, 0.6)), float2(12.9898, 78.233))) * 43758.5453);
+float foam = saturate((sp - 1.6) * 0.35) * saturate(d * 3.0) + side * 0.7;
+float grain = 0.5 + 0.5 * sin(dot(Pw.xy, float2(0.071, 0.047)) + Time * 1.3) * cos(dot(Pw.xy, float2(-0.043, 0.089)) - Time * 1.1);   // smooth, no blocky cells
 float3 foamCol = lerp(float3(0.78, 0.84, 0.84), float3(0.80, 0.55, 0.42), smoothstep(0.0, 0.8, c));
 col = lerp(col, foamCol, saturate(foam * (0.55 + 0.45 * grain)) * 0.5);
 col *= lerp(1.15, 1.0, saturate(d * 3.0));      // very shallow water reads lighter
@@ -399,7 +402,8 @@ def build_struct():
 
 def build_ghost():
     mat = fresh("M_Ghost", unreal.Material, unreal.MaterialFactoryNew())
-    set_flags(mat, blend_mode=unreal.BlendMode.BLEND_TRANSLUCENT, shading_model=unreal.MaterialShadingModel.MSM_UNLIT, two_sided=True)
+    set_flags(mat, blend_mode=unreal.BlendMode.BLEND_TRANSLUCENT, shading_model=unreal.MaterialShadingModel.MSM_UNLIT, two_sided=True,
+              used_with_instanced_static_meshes=True)
     g = Graph(mat)
     color = g.vector("Color", (0.4, 1, 0.5, 0.45))
     rgb = g.custom("return Color.rgb * 1.6;", [("Color", (color, "RGBA"))], F3, "GhostRGB")
@@ -455,7 +459,9 @@ def build_map():
 
 
 def main():
-    import_textures()
+    # textures are imported once; re-importing through Interchange would embed absolute source paths in the assets
+    if not EAL.does_asset_exist(f"{ROOT}/T_HBGreen"):
+        import_textures()
     lin = unreal.load_asset(f"{ROOT}/T_Lin")
     if not EAL.does_asset_exist(f"{ROOT}/Props/arch"):
         import_props()

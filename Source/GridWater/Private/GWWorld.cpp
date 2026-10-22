@@ -87,7 +87,19 @@ void AGWWorld::BeginPlay()
 	SphereMesh = LoadObj<UStaticMesh>(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	ConeMesh = LoadObj<UStaticMesh>(TEXT("/Engine/BasicShapes/Cone.Cone"));
 	StructMat = LoadObj<UMaterialInterface>(TEXT("/Game/GridWater/M_Struct.M_Struct"));
-	if (UMaterialInterface* G = LoadObj<UMaterialInterface>(TEXT("/Game/GridWater/M_Ghost.M_Ghost"))) GhostMID = UMaterialInstanceDynamic::Create(G, this);
+	if (UMaterialInterface* G = LoadObj<UMaterialInterface>(TEXT("/Game/GridWater/M_Ghost.M_Ghost")))
+	{
+		GhostMID = UMaterialInstanceDynamic::Create(G, this);
+		SelectMID = UMaterialInstanceDynamic::Create(G, this);
+		SelectMID->SetVectorParameterValue(TEXT("Color"), FLinearColor(1.f, 0.72f, 0.22f, 0.22f));
+		SelectISM = NewObject<UInstancedStaticMeshComponent>(this);
+		SelectISM->SetupAttachment(Root);
+		SelectISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		SelectISM->SetCastShadow(false);
+		SelectISM->RegisterComponent();
+		SelectISM->SetStaticMesh(CubeMesh);
+		SelectISM->SetMaterial(0, SelectMID);
+	}
 
 	// lighting look
 	if (UTextureCube* Cube = LoadObj<UTextureCube>(TEXT("/Engine/MapTemplates/Sky/DaylightAmbientCubemap.DaylightAmbientCubemap")))
@@ -396,7 +408,7 @@ void AGWWorld::ApplyConstraints()
 		const int32 I = S.Cell;
 		switch (S.Type)
 		{
-		case EGWTool::Levee: Sim.Solid[I] = 2.f; break;
+		case EGWTool::Levee: Sim.Solid[I] = (float)S.LeveeH; break;
 		case EGWTool::Dam: Sim.InflowLimit[I] = 0.5f; break;
 		case EGWTool::Floodgate:
 		{
@@ -579,8 +591,17 @@ bool AGWWorld::Place(EGWTool Tool, int32 CellIdx, int32 Dir, float GateH)
 	FGWStructure S;
 	S.Type = Tool; S.Cell = CellIdx; S.Dir = Dir & 3; S.GateH = GateH;
 	if (Tool == EGWTool::Levee) Sim.RemoveWater(CellIdx, Sim.Depth[CellIdx]);	// the levee displaces the water standing in its cell
-	const int32 Index = Structures.Add(S);
-	BuildStructureVisual(Structures[Index]);
+	// a new piece joining an existing run takes the run's settings (synchronised, as in the game)
+	for (int32 K = 0; K < 4; ++K)
+	{
+		const int32 X = CellIdx % GW + FWaterSim::DX[K], Y = CellIdx / GW + FWaterSim::DY[K];
+		const int32 N = Sim.In(X, Y) ? FindStructure(Sim.Idx(X, Y)) : INDEX_NONE;
+		if (N == INDEX_NONE || !SameRun(S, Structures[N])) continue;
+		S.GateH = Structures[N].GateH; S.LeveeH = Structures[N].LeveeH; S.bAuto = Structures[N].bAuto; S.bClosed = Structures[N].bClosed;
+		break;
+	}
+	Structures.Add(S);
+	RebuildAround(CellIdx);
 	ApplyConstraints();
 	return true;
 }
@@ -591,7 +612,10 @@ bool AGWWorld::RemoveAt(int32 CellIdx)
 	if (Index == INDEX_NONE) return false;
 	for (UStaticMeshComponent* C : Structures[Index].Parts) if (C) C->DestroyComponent();
 	Structures.RemoveAt(Index);
+	Selected.Remove(CellIdx);
+	RebuildAround(CellIdx);
 	ApplyConstraints();
+	RefreshSelectionVisual();
 	return true;
 }
 
@@ -613,6 +637,117 @@ void AGWWorld::ToggleValve(int32 CellIdx)
 	else if (!S.bClosed) S.bClosed = true;
 	else S.bAuto = true;
 	ApplyConstraints();
+}
+
+bool AGWWorld::SameRun(const FGWStructure& A, const FGWStructure& B) const
+{
+	if (A.Type != B.Type) return false;
+	if (A.Type == EGWTool::Levee) return true;
+	if (A.Type == EGWTool::Floodgate || A.Type == EGWTool::Valve || A.Type == EGWTool::Dam) return (A.Dir & 1) == (B.Dir & 1);
+	return false;
+}
+
+bool AGWWorld::Joined(const FGWStructure& S, int32 Side) const
+{
+	// Side +-1 along the structure's cross-channel axis (local Y): grid offset (-DY, DX) of its direction
+	const int32 X = S.Cell % GW - Side * FWaterSim::DY[S.Dir], Y = S.Cell / GW + Side * FWaterSim::DX[S.Dir];
+	const int32 N = Sim.In(X, Y) ? FindStructure(Sim.Idx(X, Y)) : INDEX_NONE;
+	return N != INDEX_NONE && SameRun(S, Structures[N]);
+}
+
+TArray<int32> AGWWorld::ConnectedGroup(int32 CellIdx) const
+{
+	TArray<int32> Out;
+	const int32 Start = FindStructure(CellIdx);
+	if (Start == INDEX_NONE) return Out;
+	TArray<int32> Open = { CellIdx };
+	TSet<int32> Seen = { CellIdx };
+	while (Open.Num())
+	{
+		const int32 C = Open.Pop();
+		Out.Add(C);
+		for (int32 K = 0; K < 4; ++K)
+		{
+			const int32 X = C % GW + FWaterSim::DX[K], Y = C / GW + FWaterSim::DY[K];
+			if (!Sim.In(X, Y)) continue;
+			const int32 N = Sim.Idx(X, Y), Si = FindStructure(N);
+			if (Si == INDEX_NONE || Seen.Contains(N) || !SameRun(Structures[Start], Structures[Si])) continue;
+			Seen.Add(N); Open.Add(N);
+		}
+	}
+	return Out;
+}
+
+void AGWWorld::AdjustGroupHeight(const TArray<int32>& Cells, int32 Primary, int32 Steps)
+{
+	const int32 P = FindStructure(Primary != INDEX_NONE ? Primary : (Cells.Num() ? Cells[0] : INDEX_NONE));
+	if (P == INDEX_NONE) return;
+	const FGWStructure& Ref = Structures[P];
+	if (Ref.Type == EGWTool::Floodgate)
+	{
+		const float H = FMath::Clamp(FMath::RoundToFloat((Ref.GateH + Steps * 0.25f) * 20.f) / 20.f, 0.f, 3.f);
+		for (int32 C : Cells) { const int32 I = FindStructure(C); if (I != INDEX_NONE && Structures[I].Type == EGWTool::Floodgate) Structures[I].GateH = H; }
+	}
+	else if (Ref.Type == EGWTool::Levee)
+	{
+		const int32 H = FMath::Clamp(Ref.LeveeH + Steps, 1, 3);
+		for (int32 C : Cells) { const int32 I = FindStructure(C); if (I != INDEX_NONE && Structures[I].Type == EGWTool::Levee && Structures[I].LeveeH != H) { Structures[I].LeveeH = H; RebuildVisual(C); } }
+	}
+	ApplyConstraints();
+	RefreshSelectionVisual();
+}
+
+void AGWWorld::SetValveMode(const TArray<int32>& Cells, int32 Mode)
+{
+	for (int32 C : Cells)
+	{
+		const int32 I = FindStructure(C);
+		if (I == INDEX_NONE || Structures[I].Type != EGWTool::Valve) continue;
+		Structures[I].bAuto = Mode == 0;
+		Structures[I].bClosed = Mode == 2;
+	}
+	ApplyConstraints();
+}
+
+void AGWWorld::SetSelection(int32 CellIdx)
+{
+	Selected = CellIdx != INDEX_NONE ? ConnectedGroup(CellIdx) : TArray<int32>();
+	SelectedPrimary = Selected.Num() ? CellIdx : INDEX_NONE;
+	RefreshSelectionVisual();
+}
+
+void AGWWorld::RefreshSelectionVisual()
+{
+	if (!SelectISM) return;
+	SelectISM->ClearInstances();
+	for (int32 C : Selected)
+	{
+		const int32 I = FindStructure(C);
+		if (I == INDEX_NONE) continue;
+		const FGWStructure& S = Structures[I];
+		const float H = S.Type == EGWTool::Levee ? S.LeveeH : S.Type == EGWTool::Floodgate ? 3.6f : S.Type == EGWTool::Valve ? 1.8f : 0.9f;
+		SelectISM->AddInstance(FTransform(FRotator::ZeroRotator, CellCenter(C, Sim.Ground[C] * Block + H * 50.f), FVector(1.06f, 1.06f, H + 0.08f)), true);
+	}
+}
+
+void AGWWorld::RebuildVisual(int32 CellIdx)
+{
+	const int32 I = FindStructure(CellIdx);
+	if (I == INDEX_NONE) return;
+	FGWStructure& S = Structures[I];
+	for (UStaticMeshComponent* C : S.Parts) if (C) C->DestroyComponent();
+	S.Parts.Reset(); S.Moving = nullptr; S.Lamp = nullptr;
+	BuildStructureVisual(S);
+}
+
+void AGWWorld::RebuildAround(int32 CellIdx)
+{
+	RebuildVisual(CellIdx);
+	for (int32 K = 0; K < 4; ++K)
+	{
+		const int32 X = CellIdx % GW + FWaterSim::DX[K], Y = CellIdx / GW + FWaterSim::DY[K];
+		if (Sim.In(X, Y)) RebuildVisual(Sim.Idx(X, Y));
+	}
 }
 
 bool AGWWorld::Terraform(int32 CellIdx, int32 Delta)
@@ -656,7 +791,7 @@ void AGWWorld::BuildStructureVisual(FGWStructure& S)
 	switch (S.Type)
 	{
 	case EGWTool::Levee:
-		AddPart(S, CubeMesh, C + FVector(0, 0, 100), R, FVector(1.0f, 1.0f, 2.0f), Stone, 2.f);
+		AddPart(S, CubeMesh, C + FVector(0, 0, S.LeveeH * 50.f), R, FVector(1.0f, 1.0f, (float)S.LeveeH), Stone, 2.f);
 		break;
 	case EGWTool::Dam:
 		for (int32 K = 0; K < 6; ++K)
@@ -665,20 +800,31 @@ void AGWWorld::BuildStructureVisual(FGWStructure& S)
 		AddPart(S, CubeMesh, C + FVector(0, 0, 4), R, FVector(0.42f, 1.0f, 0.1f), Stone, 2.f);
 		break;
 	case EGWTool::Floodgate:
-		for (float Side : { -1.f, 1.f })
-			AddPart(S, CubeMesh, C + Rt * Side * 46.f + FVector(0, 0, 170), R, FVector(0.22f, 0.16f, 3.4f), Stone, 2.f);
-		AddPart(S, CubeMesh, C + FVector(0, 0, 345), R, FVector(0.3f, 1.14f, 0.18f), WoodDark, 1.f);
-		AddPart(S, CylMesh, C + FVector(0, 0, 372), R + FRotator(90, 0, 0), FVector(0.42f, 0.42f, 0.06f), Brass, 0.f, 0.4f);
-		S.Moving = AddPart(S, CubeMesh, C + FVector(0, 0, S.GateH * 50.f), R, FVector(0.12f, 0.9f, FMath::Max(S.GateH, 0.02f)), Wood, 1.f);
-		break;
 	case EGWTool::Valve:
-		for (float Side : { -1.f, 1.f })
-			AddPart(S, CubeMesh, C + Rt * Side * 46.f + FVector(0, 0, 75), R, FVector(0.24f, 0.16f, 1.5f), Stone, 2.f);
-		AddPart(S, CubeMesh, C + FVector(0, 0, 155), R, FVector(0.34f, 1.14f, 0.2f), Stone, 2.f);
+	{
+		// a run of joined gates shares its posts: posts only at the open ends, leaf and beam continuous
+		const bool bL = Joined(S, -1), bR = Joined(S, 1);
+		const float Lo = bL ? -50.f : -38.f, Hi = bR ? 50.f : 38.f;
+		const float BLo = bL ? -50.f : -57.f, BHi = bR ? 50.f : 57.f;
+		S.LeafW = (Hi - Lo) / 100.f; S.LeafOff = (Hi + Lo) * 0.5f;
+		const bool bGate = S.Type == EGWTool::Floodgate;
+		const float PostH = bGate ? 3.4f : 1.5f;
+		for (int32 Side : { -1, 1 })
+			if (!(Side < 0 ? bL : bR))
+				AddPart(S, CubeMesh, C + Rt * Side * 46.f + FVector(0, 0, PostH * 50.f), R, FVector(bGate ? 0.22f : 0.24f, 0.16f, PostH), Stone, 2.f);
+		if (bGate)
+		{
+			AddPart(S, CubeMesh, C + Rt * ((BHi + BLo) * 0.5f) + FVector(0, 0, 345), R, FVector(0.3f, (BHi - BLo) / 100.f, 0.18f), WoodDark, 1.f);
+			if (!bL) AddPart(S, CylMesh, C + FVector(0, 0, 372), R + FRotator(90, 0, 0), FVector(0.42f, 0.42f, 0.06f), Brass, 0.f, 0.4f);
+			S.Moving = AddPart(S, CubeMesh, C + Rt * S.LeafOff + FVector(0, 0, S.GateH * 50.f), R, FVector(0.12f, S.LeafW, FMath::Max(S.GateH, 0.02f)), Wood, 1.f);
+			break;
+		}
+		AddPart(S, CubeMesh, C + Rt * ((BHi + BLo) * 0.5f) + FVector(0, 0, 155), R, FVector(0.34f, (BHi - BLo) / 100.f, 0.2f), Stone, 2.f);
 		AddPart(S, ConeMesh, C + FVector(0, 0, 175) + Fw * 6.f, R + FRotator(-90, 0, 0), FVector(0.22f, 0.22f, 0.28f), Brass, 0.f, 0.4f);
-		S.Moving = AddPart(S, CubeMesh, C + FVector(0, 0, 150), R, FVector(0.08f, 0.9f, 1.0f), Metal, 0.f, 0.45f);
-		S.Lamp = AddPart(S, SphereMesh, C + FVector(0, 0, 172) - Fw * 14.f + Rt * 40.f, R, FVector(0.14f), FLinearColor(0.1f, 0.9f, 0.3f), 3.f, 0.3f);
+		S.Moving = AddPart(S, CubeMesh, C + Rt * S.LeafOff + FVector(0, 0, 150), R, FVector(0.08f, S.LeafW, 1.0f), Metal, 0.f, 0.45f);
+		S.Lamp = AddPart(S, SphereMesh, C + FVector(0, 0, 172) - Fw * 14.f + Rt * 28.f, R, FVector(0.14f), FLinearColor(0.1f, 0.9f, 0.3f), 3.f, 0.3f);
 		break;
+	}
 	case EGWTool::Pump:
 		AddPart(S, CubeMesh, C + FVector(0, 0, 32), R, FVector(0.72f, 0.72f, 0.64f), Wood, 1.f);
 		AddPart(S, CubeMesh, C + FVector(0, 0, 70) + Rt * 18.f, R + FRotator(0, 0, 32), FVector(0.84f, 0.46f, 0.06f), WoodDark, 1.f);
@@ -701,8 +847,9 @@ void AGWWorld::UpdateStructureVisuals(float DeltaSeconds)
 			const float Cur = S.Moving->GetComponentScale().Z;
 			const float Tgt = FMath::Max(S.GateH, 0.02f);
 			const float H = FMath::FInterpTo(Cur, Tgt, DeltaSeconds, 6.f);
-			S.Moving->SetWorldScale3D(FVector(0.12f, 0.9f, H));
-			S.Moving->SetWorldLocation(C + FVector(0, 0, H * 50.f));
+			const FVector Rt = FRotationMatrix(FRotator(0.f, S.Dir * 90.f, 0.f)).GetUnitAxis(EAxis::Y);
+			S.Moving->SetWorldScale3D(FVector(0.12f, S.LeafW, H));
+			S.Moving->SetWorldLocation(C + Rt * S.LeafOff + FVector(0, 0, H * 50.f));
 		}
 		else if (S.Type == EGWTool::Valve && S.Moving)
 		{

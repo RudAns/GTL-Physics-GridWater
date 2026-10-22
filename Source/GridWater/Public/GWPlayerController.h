@@ -29,6 +29,12 @@ public:
 	bool bHoverValid = false;
 	FString HoverWhy;
 	void SelectTool(EGWTool T);
+	// selection of a connected structure run (click with the inspect tool)
+	void AdjustSelection(int32 Steps);
+	void SetSelectedValveMode(int32 Mode);
+	void RemoveSelection();
+	void ClearSelection();
+	int32 SelectedValveMode() const;
 	static FString ToolName(EGWTool T);
 	static FString ToolKey(EGWTool T);
 	static FString ToolHelp(EGWTool T);
