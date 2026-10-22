@@ -353,8 +353,8 @@ TSharedRef<SWidget> UGWHud::RebuildWidget()
 		{
 			UBorder* Bar = Panel(FillSoft, FLinearColor::Transparent, 8.f, FMargin(12, 6, 12, 6));
 			UHorizontalBox* H = HBox();
-			const TPair<const TCHAR*, const TCHAR*> Hints[] = { {TEXT("WASD"), TEXT("平移")}, {TEXT("Q E"), TEXT("旋转 45°")}, {TEXT("滚轮"), TEXT("缩放")}, {TEXT("中键"), TEXT("拖动")},
-				{TEXT("1–7"), TEXT("建造")}, {TEXT("R"), TEXT("转向")}, {TEXT("[ ]"), TEXT("闸高")}, {TEXT("V"), TEXT("视图")}, {TEXT("Space"), TEXT("暂停")}, {TEXT("Tab"), TEXT("速度")},
+			const TPair<const TCHAR*, const TCHAR*> Hints[] = { {TEXT("WASD"), TEXT("平移")}, {TEXT("R"), TEXT("旋转 45°")}, {TEXT("滚轮"), TEXT("缩放")}, {TEXT("中键"), TEXT("拖动")},
+				{TEXT("1–7"), TEXT("建造")}, {TEXT("Z"), TEXT("建筑转向")}, {TEXT("[ ]"), TEXT("闸高")}, {TEXT("V"), TEXT("视图")}, {TEXT("Space"), TEXT("暂停")}, {TEXT("Tab"), TEXT("速度")},
 				{TEXT("I"), TEXT("格子信息")}, {TEXT("L"), TEXT("实验室")}, {TEXT("H"), TEXT("隐藏界面")}, {TEXT("Home"), TEXT("重开")} };
 			for (const auto& P : Hints)
 			{
@@ -496,7 +496,7 @@ void UGWHud::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 	// tools
 	for (int32 I = 0; I < ToolBacks.Num(); ++I) ToolBacks[I]->SetBrush(Rounded(ToolOrder[I] == P->Tool ? RowSel : Row, 6.f, ToolOrder[I] == P->Tool ? Gold : FLinearColor::Transparent, 1.f));
 	FString Help = AGWPlayerController::ToolHelp(P->Tool);
-	if (P->Tool == EGWTool::Valve || P->Tool == EGWTool::Dam) { static const TCHAR* D[] = { TEXT("东"), TEXT("南"), TEXT("西"), TEXT("北") }; Help += FString::Printf(TEXT("\n朝向：%s（R 旋转）"), D[P->Dir]); }
+	if (P->Tool == EGWTool::Valve || P->Tool == EGWTool::Dam) { static const TCHAR* D[] = { TEXT("东"), TEXT("南"), TEXT("西"), TEXT("北") }; Help += FString::Printf(TEXT("\n朝向：%s（Z 旋转）"), D[P->Dir]); }
 	if (P->Tool == EGWTool::Floodgate) Help += FString::Printf(TEXT("\n新闸高度：%.2f 格"), W->DefaultGateH);
 	Set(ToolHelp, Help);
 	Set(ToolStatus, P->Tool != EGWTool::None && P->HoverCell != INDEX_NONE && !P->bHoverValid ? P->HoverWhy : FString());

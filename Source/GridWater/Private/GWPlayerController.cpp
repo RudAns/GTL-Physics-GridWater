@@ -304,6 +304,8 @@ void AGWPlayerController::HandleKeys(float DeltaTime)
 		if (IsInputKeyDown(EKeys::D) || IsInputKeyDown(EKeys::Right)) In.X += 1;
 		if (IsInputKeyDown(EKeys::A) || IsInputKeyDown(EKeys::Left)) In.X -= 1;
 		Cam->Pan(In, DeltaTime);
+		// R rotates the camera 45 degrees (Shift+R the other way); Q / E stay as alternatives
+		if (WasInputKeyJustPressed(EKeys::R)) Cam->RotateStep(bShift ? -1 : 1);
 		if (WasInputKeyJustPressed(EKeys::Q)) Cam->RotateStep(-1);
 		if (WasInputKeyJustPressed(EKeys::E)) Cam->RotateStep(1);
 		float Mx, My;
@@ -325,7 +327,7 @@ void AGWPlayerController::HandleKeys(float DeltaTime)
 		{EKeys::Five, EGWTool::Pump}, {EKeys::Six, EGWTool::Dig}, {EKeys::Seven, EGWTool::Raise}, {EKeys::X, EGWTool::Erase} };
 	for (const auto& K : ToolKeys) if (WasInputKeyJustPressed(K.Key)) SelectTool(K.Value);
 	if (WasInputKeyJustPressed(EKeys::Escape) || WasInputKeyJustPressed(EKeys::RightMouseButton)) SelectTool(EGWTool::None);
-	if (WasInputKeyJustPressed(EKeys::R)) { Dir = (Dir + 1) & 3; bDirManual = true; }
+	if (WasInputKeyJustPressed(EKeys::Z)) { Dir = (Dir + 1) & 3; bDirManual = true; }
 	static const FKey FKeys[] = { EKeys::F1, EKeys::F2, EKeys::F3, EKeys::F4, EKeys::F5, EKeys::F6, EKeys::F7 };
 	for (int32 I = 0; I < NumPrinciples; ++I) if (WasInputKeyJustPressed(FKeys[I])) TogglePrinciple(I);
 	if (!Water) return;
@@ -456,11 +458,11 @@ void AGWPlayerController::TickCapture(float DeltaTime)
 			{ TEXT("t_start"), 0.5f, [](AGWPlayerController* PC) { PC->Press(EKeys::Enter); },
 				[](AGWPlayerController* PC) { PC->Check(TEXT("enter_starts"), !PC->bIntro && PC->Water->SpeedIndex == 1, FString::Printf(TEXT("intro=%d speed=%d"), PC->bIntro, PC->Water->SpeedIndex)); }, false },
 			{ TEXT("01_overview"), 1.5f, [CamAt](AGWPlayerController* PC) { CamAt(PC, FVector(4800, 3500, 450), 12500.f, -90.f); }, Noop, true },
-			{ TEXT("t_rotate"), 1.2f, [](AGWPlayerController* PC) { PC->Memo.Add(TEXT("yaw"), PC->GetCam()->GetYaw()); PC->Press(EKeys::Q); },
-				[](AGWPlayerController* PC) { const float D = PC->GetCam()->GetYaw() - PC->Memo[TEXT("yaw")]; PC->Check(TEXT("q_rotates_45"), FMath::IsNearlyEqual(D, -45.f, 1.f), FString::Printf(TEXT("delta=%.1f"), D)); }, false },
+			{ TEXT("t_rotate"), 1.2f, [](AGWPlayerController* PC) { PC->Memo.Add(TEXT("yaw"), PC->GetCam()->GetYaw()); PC->Press(EKeys::LeftShift, 4); PC->Press(EKeys::R); },
+				[](AGWPlayerController* PC) { const float D = PC->GetCam()->GetYaw() - PC->Memo[TEXT("yaw")]; PC->Check(TEXT("shift_r_rotates_minus_45"), FMath::IsNearlyEqual(D, -45.f, 1.f), FString::Printf(TEXT("delta=%.1f"), D)); }, false },
 			{ TEXT("02_rotated"), 1.0f, Noop, Noop, true },
-			{ TEXT("t_rotate_back"), 1.2f, [](AGWPlayerController* PC) { PC->Press(EKeys::E); },
-				[](AGWPlayerController* PC) { PC->Check(TEXT("e_rotates_back"), FMath::IsNearlyEqual(PC->GetCam()->GetYaw(), PC->Memo[TEXT("yaw")], 1.f), FString::Printf(TEXT("yaw=%.1f"), PC->GetCam()->GetYaw())); }, false },
+			{ TEXT("t_rotate_back"), 1.2f, [](AGWPlayerController* PC) { PC->Press(EKeys::R); },
+				[](AGWPlayerController* PC) { PC->Check(TEXT("r_rotates_plus_45"), FMath::IsNearlyEqual(PC->GetCam()->GetYaw(), PC->Memo[TEXT("yaw")], 1.f), FString::Printf(TEXT("yaw=%.1f"), PC->GetCam()->GetYaw())); }, false },
 			{ TEXT("t_zoom"), 1.0f, [](AGWPlayerController* PC) { PC->Memo.Add(TEXT("arm"), PC->GetCam()->Arm->TargetArmLength); PC->Press(EKeys::MouseScrollUp, 1); },
 				[](AGWPlayerController* PC) { const float A = PC->GetCam()->Arm->TargetArmLength; PC->Check(TEXT("wheel_zooms_in"), A < PC->Memo[TEXT("arm")] - 100.f, FString::Printf(TEXT("arm %.0f -> %.0f"), PC->Memo[TEXT("arm")], A)); }, false },
 			{ TEXT("t_pan"), 0.8f, [](AGWPlayerController* PC) { PC->Memo.Add(TEXT("fx"), PC->GetCam()->GetFocus().X); PC->Press(EKeys::D, 20); },
@@ -472,6 +474,8 @@ void AGWPlayerController::TickCapture(float DeltaTime)
 					CamAt(PC, PC->Water->CellCenter(C, 300), 2600.f, -90.f);
 					PC->Press(EKeys::Three); },
 				[](AGWPlayerController* PC) { PC->Check(TEXT("key3_selects_floodgate"), PC->Tool == EGWTool::Floodgate, ToolName(PC->Tool)); }, false },
+			{ TEXT("t_dir_z"), 0.4f, [](AGWPlayerController* PC) { PC->Memo.Add(TEXT("dir"), PC->Dir); PC->Press(EKeys::Z); },
+				[](AGWPlayerController* PC) { PC->Check(TEXT("z_rotates_building"), PC->Dir == (((int32)PC->Memo[TEXT("dir")] + 1) & 3) && PC->bDirManual, FString::Printf(TEXT("dir %d -> %d"), (int32)PC->Memo[TEXT("dir")], PC->Dir)); PC->bDirManual = false; }, false },
 			{ TEXT("05_floodgate_hover"), 0.6f, [M](AGWPlayerController* PC) { PC->MouseToCell(M(PC, TEXT("gate"))); },
 				[M](AGWPlayerController* PC) { PC->Check(TEXT("mouse_hovers_cell"), PC->HoverCell == M(PC, TEXT("gate")), FString::Printf(TEXT("hover=%d want=%d"), PC->HoverCell, M(PC, TEXT("gate")))); }, true },
 			{ TEXT("t_place"), 0.6f, [](AGWPlayerController* PC) { PC->Press(EKeys::LeftMouseButton); },
