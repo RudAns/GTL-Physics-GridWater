@@ -111,3 +111,10 @@
 ### 资源
 
 树木、南瓜、栅栏、灯柱、石拱、石板路、长椅来自 Kay Lousberg 的 KayKit Halloween Bits（CC0），源文件与许可证在 `SourceAssets/KayKit`。松树叶片原为橙黄色，`halloweenbits_texture_green.png` 是把这两格色带改为绿色的副本。地形、水面和水利建筑均由代码生成。
+
+## 许可证
+
+本仓库自己编写的代码、脚本、着色器、文档和截图以 [MIT 许可证](LICENSE) 发布。下列第三方内容不在 MIT 范围内，仍按各自的许可使用：
+
+- 树木、南瓜、栅栏等场景道具（`SourceAssets/KayKit` 及其导入资产）：Kay Lousberg 的 KayKit，[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)，许可证原文在 `SourceAssets/KayKit`。
+- Unreal Engine 5.8：打开、编译和运行本工程需遵守 [Unreal Engine EULA](https://www.unrealengine.com/eula/unreal)。
