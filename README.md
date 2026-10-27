@@ -1,8 +1,23 @@
+<div align="center">
+
 # 《海狸浮生记》的网格水
 
-从城建游戏《海狸浮生记》（Timberborn，Mechanistry 开发）的水系统到 UE5：技术调研 + UE 5.8 可交互复现。
+**虚拟管道法 · 多段水柱 · 恶水平流 · 蒸发与灌溉 · 水量守恒校验**<br>
+还原城建游戏《海狸浮生记》（Timberborn）的水流、干旱和恶水潮：技术调研 + UE 5.8 可交互复现
+
+<a href="LICENSE"><img alt="license MIT" src="https://img.shields.io/badge/license-MIT-0a7bbb"></a>
+<img alt="引擎 UE 5.8" src="https://img.shields.io/badge/%E5%BC%95%E6%93%8E-UE_5.8-313131?logo=unrealengine">
+<img alt="代码 C++" src="https://img.shields.io/badge/%E4%BB%A3%E7%A0%81-C%2B%2B-00599c">
+<a href="Docs/Research.html"><img alt="调研 48 篇文献" src="https://img.shields.io/badge/%E8%B0%83%E7%A0%94-48_%E7%AF%87%E6%96%87%E7%8C%AE-e05d44"></a>
+<img alt="手游 可行" src="https://img.shields.io/badge/%E6%89%8B%E6%B8%B8-%E5%8F%AF%E8%A1%8C-2ea44f">
+
+[📥 下载调研报告](Docs/Research.html) · [📥 下载落地文档](Docs/Implementation.html) · [🎮 运行 Demo](#ue-58-可交互-demo) · [⌨️ 操作说明](#操作)
+
+<br>
 
 [![调研报告封面](Docs/shots/00_research_cover.png)](Docs/Research.html)
+
+</div>
 
 ## 调研报告
 
