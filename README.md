@@ -11,7 +11,7 @@
 <a href="Docs/Research.html"><img alt="调研 48 篇文献" src="https://img.shields.io/badge/%E8%B0%83%E7%A0%94-48_%E7%AF%87%E6%96%87%E7%8C%AE-e05d44"></a>
 <img alt="手游 可行" src="https://img.shields.io/badge/%E6%89%8B%E6%B8%B8-%E5%8F%AF%E8%A1%8C-2ea44f">
 
-[📥 下载调研报告](Docs/Research.html) · [📥 下载落地文档](Docs/Implementation.html) · [🎮 运行 Demo](#ue-58-可交互-demo) · [⌨️ 操作说明](#操作)
+[📥 下载调研报告](Docs/Research.html) · [📥 下载落地文档](Docs/Implementation.html)
 
 <br>
 
